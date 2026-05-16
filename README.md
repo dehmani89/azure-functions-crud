@@ -45,8 +45,8 @@ createdb productsDB
 
 ```bash
 docker run --name products-pg \
-  -e POSTGRES_USER=dbadmin \
-  -e POSTGRES_PASSWORD='Qwerty89!' \
+  -e POSTGRES_USER=<YOUR_USERNAME_HERE> \
+  -e POSTGRES_PASSWORD=<YOUR_PASSWORD_HERE> \
   -e POSTGRES_DB=productsDB \
   -p 5432:5432 \
   -d postgres:16
@@ -57,13 +57,13 @@ docker run --name products-pg \
 Run the schema + seed script (creates the `products` table and inserts 15 dental-equipment rows):
 
 ```bash
-psql "postgresql://dbadmin:Qwerty89!@localhost:5432/productsDB" -f sql/setup.sql
+psql "postgresql://<YOUR_USERNAME_HERE>:<YOUR_PASSWORD_HERE>@localhost:5432/productsDB" -f sql/setup.sql
 ```
 
 Verify the table:
 
 ```bash
-psql "postgresql://dbadmin:Qwerty89!@localhost:5432/productsDB" -c "SELECT COUNT(*) FROM products;"
+psql "postgresql://<YOUR_USERNAME_HERE>:<YOUR_PASSWORD_HERE>@localhost:5432/productsDB" -c "SELECT COUNT(*) FROM products;"
 ```
 
 ## 5. Configure `local.settings.json`
@@ -76,7 +76,7 @@ This file is git-ignored. Create or update it at the repo root:
   "Values": {
     "AzureWebJobsStorage": "",
     "FUNCTIONS_WORKER_RUNTIME": "node",
-    "DATABASE_URL": "postgresql://dbadmin:Qwerty89!@localhost:5432/productsDB"
+    "DATABASE_URL": "postgresql://<YOUR_USERNAME_HERE>:<YOUR_PASSWORD_HERE>@localhost:5432/productsDB"
   }
 }
 ```
@@ -205,9 +205,9 @@ echo "→ delete";    curl -s -X DELETE $BASE/products/$ID; echo
 If your data gets messy:
 
 ```bash
-psql "postgresql://dbadmin:Qwerty89!@localhost:5432/productsDB" \
+psql "postgresql://<YOUR_USERNAME_HERE>:<YOUR_PASSWORD_HERE>@localhost:5432/productsDB" \
   -c "DROP TABLE IF EXISTS products;"
-psql "postgresql://dbadmin:Qwerty89!@localhost:5432/productsDB" -f sql/setup.sql
+psql "postgresql://<YOUR_USERNAME_HERE>:<YOUR_PASSWORD_HERE>@localhost:5432/productsDB" -f sql/setup.sql
 ```
 
 ## 11. Project Layout (for orientation)

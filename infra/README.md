@@ -102,9 +102,15 @@ Push to `main` (or run the workflow manually from the Actions tab). The workflow
 
 Re-run the same `az deployment sub create` command — it's idempotent. Bicep will only touch resources that changed.
 
-## Trusting additional branches
+## Trusting additional environments or branches
 
-To deploy from a branch other than `main`, add another `federatedIdentityCredentials` resource in `resources.bicep` with a different `subject` (e.g. `repo:<owner>/<repo>:ref:refs/heads/staging`) or scope it to an environment (`repo:<owner>/<repo>:environment:staging`).
+The federated credential is bound to a GitHub Actions **environment** (default: `production`) so OIDC trust matches what GitHub presents when `environment: production` is set on the workflow job. To trust additional callers, add another `federatedIdentityCredentials` resource in `resources.bicep` with a different `subject`:
+
+- another environment: `repo:<owner>/<repo>:environment:staging`
+- a branch (when the workflow job has no `environment:`): `repo:<owner>/<repo>:ref:refs/heads/main`
+- a pull request: `repo:<owner>/<repo>:pull_request`
+
+The subject claim GitHub actually sends shows up in the failed `azure/login` log line under `subject claim - …`; matching that string is the fix for `AADSTS700213`.
 
 ## Tear-down
 

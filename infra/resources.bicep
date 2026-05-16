@@ -10,8 +10,8 @@ param namePrefix string
 @description('GitHub repo trusted by the federated credential, "owner/repo".')
 param githubRepository string
 
-@description('Branch authorized to deploy via OIDC.')
-param githubBranch string
+@description('Name of the GitHub Actions environment that gates production deploys. Must match `environment:` in the workflow.')
+param githubEnvironment string
 
 @description('PostgreSQL connection string. Stored as DATABASE_URL app setting.')
 @secure()
@@ -177,13 +177,13 @@ resource githubIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-0
 
 resource githubFederatedCredential 'Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials@2023-01-31' = {
   parent: githubIdentity
-  name: 'github-${githubBranch}'
+  name: 'github-${githubEnvironment}'
   properties: {
     issuer: 'https://token.actions.githubusercontent.com'
     audiences: [
       'api://AzureADTokenExchange'
     ]
-    subject: 'repo:${githubRepository}:ref:refs/heads/${githubBranch}'
+    subject: 'repo:${githubRepository}:environment:${githubEnvironment}'
   }
 }
 

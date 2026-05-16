@@ -21,8 +21,8 @@ param resourceGroupName string = 'rg-${namePrefix}'
 @description('GitHub repository the federated credential will trust, in "owner/repo" form.')
 param githubRepository string
 
-@description('Branch authorized to deploy via OIDC.')
-param githubBranch string = 'main'
+@description('GitHub Actions environment authorized to deploy via OIDC. Must match `environment:` in the workflow.')
+param githubEnvironment string = 'production'
 
 @description('PostgreSQL connection string. Wired into the Function App as DATABASE_URL.')
 @secure()
@@ -40,7 +40,7 @@ module resources 'resources.bicep' = {
     location: location
     namePrefix: namePrefix
     githubRepository: githubRepository
-    githubBranch: githubBranch
+    githubEnvironment: githubEnvironment
     databaseUrl: databaseUrl
   }
 }

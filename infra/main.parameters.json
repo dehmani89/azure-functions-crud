@@ -14,8 +14,8 @@
     "githubRepository": {
       "value": "dehmani89/azure-functions-crud"
     },
-    "githubBranch": {
-      "value": "main"
+    "githubEnvironment": {
+      "value": "production"
     },
     "databaseUrl": {
       "value": "REPLACE_ME: postgresql://<user>:<password>@<host>:5432/<db>?sslmode=require"

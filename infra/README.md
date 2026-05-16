@@ -13,7 +13,7 @@ This directory provisions the Azure resources required to host `azure-functions-
 | App Service Plan (`FC1` / FlexConsumption) | Hosting plan |
 | Function App (`functionapp,linux`, Node 20) | Runs the CRUD API |
 | User-assigned managed identity | Identity GitHub Actions impersonates via OIDC |
-| Federated identity credential | Trusts `repo:<owner>/<repo>:ref:refs/heads/main` |
+| Federated identity credential | Trusts `repo:<owner>/<repo>:environment:production` (matches the workflow's `environment:` claim) |
 | Role assignment: Website Contributor | On the Function App — lets the workflow deploy code |
 | Role assignment: Storage Blob Data Contributor | On the storage account — lets the workflow upload the package |
 
@@ -36,16 +36,28 @@ App settings configured on the Function App: `AzureWebJobsStorage`, `DEPLOYMENT_
 
 ## One-time bootstrap
 
+The order matters: create the GitHub environment **before** running Bicep, otherwise the federated credential won't match anything the workflow can present.
+
+### Step 1 — Create the `production` environment in GitHub
+
+In `dehmani89/azure-functions-crud` → **Settings → Environments → New environment** → name it `production`. No protection rules required for a POC. This is what makes GitHub Actions emit the `repo:…:environment:production` OIDC subject the federated credential trusts.
+
+### Step 2 — Allow the Function App to reach your Postgres server
+
+On your Azure Database for PostgreSQL Flexible Server → **Networking** → enable **"Allow public access from any Azure service within Azure to this server"** (POC-friendly), or add the Function App's outbound IPs as explicit firewall rules. Without this, the API returns 500s on every route except `/healthcheck`.
+
+### Step 3 — Deploy the infrastructure
+
 ```bash
-# 1. Log in
+# Log in
 az login
 az account set --subscription <subscription-id>
 
-# 2. (Optional) Adjust namePrefix / githubRepository in infra/main.parameters.json.
-#    Do NOT put your real Postgres password in this file — it's committed to the repo.
-#    Pass it inline on the command line instead (next step).
+# (Optional) Adjust namePrefix / githubRepository / githubEnvironment in infra/main.parameters.json.
+# Do NOT put your real Postgres password in this file — it's committed to the repo.
+# Pass it inline on the command line instead (next command).
 
-# 3. Deploy. Override databaseUrl inline so the real connection string never lands in git.
+# Deploy. The inline databaseUrl override keeps the real connection string out of git.
 az deployment sub create \
   --location westus2 \
   --name azfn-crud-bootstrap \
@@ -53,7 +65,7 @@ az deployment sub create \
   --parameters infra/main.parameters.json \
   --parameters databaseUrl='postgresql://<user>:<password>@<host>:5432/<db>?sslmode=require'
 
-# 4. Capture outputs
+# Capture outputs
 az deployment sub show \
   --name azfn-crud-bootstrap \
   --query properties.outputs \
@@ -80,23 +92,35 @@ Outputs you'll need for GitHub:
 | `azureSubscriptionId` | Variable `AZURE_SUBSCRIPTION_ID` |
 | `functionAppName` | Variable `AZURE_FUNCTIONAPP_NAME` |
 
-## Configure GitHub repo variables
+### Step 4 — Configure GitHub repo variables
 
-In the GitHub repo (`dehmani89/azure-functions-crud`):
+**Settings → Secrets and variables → Actions → Variables → New repository variable**, add each of the four above. These are **variables**, not secrets — they're identifiers, not credentials. The OIDC token issued at workflow runtime is what actually authenticates.
 
-1. **Settings → Environments → New environment → `production`** (the workflow targets this environment).
-2. **Settings → Secrets and variables → Actions → Variables → New repository variable**, add each of the four above.
-
-   These are **variables**, not secrets — they're identifiers, not credentials. The OIDC token issued at workflow runtime is what actually authenticates.
-
-## Deploy code
+### Step 5 — Deploy code
 
 Push to `main` (or run the workflow manually from the Actions tab). The workflow at `.github/workflows/deploy.yml`:
 
 1. Installs production dependencies (`npm ci --omit=dev`).
-2. Logs in to Azure via OIDC using the user-assigned MI.
+2. Logs in to Azure via OIDC using the user-assigned MI (subject `repo:…:environment:production`).
 3. Deploys the zip package with `Azure/functions-action@v1` (`sku: flexconsumption`).
 4. Smoke-tests `https://<functionAppName>.azurewebsites.net/api/healthcheck`.
+
+## Verify the deployment
+
+Once the workflow shows a green check, hit the public endpoints:
+
+```bash
+APP=<functionAppName>        # e.g. func-prodcrud-j3xqdaliqzms4
+BASE="https://$APP.azurewebsites.net/api"
+
+curl -i $BASE/healthcheck                     # 200 {"status":"Service Up 2"}
+curl -s $BASE/products | jq '. | length'      # row count from your Postgres
+curl -s -X POST $BASE/products \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Test","description":"smoke","price":1.00}' | jq
+```
+
+If `/healthcheck` returns 200 but `/products` returns 500, that's almost always the Postgres firewall (see Step 2). Application Insights → Failures will show the exact connection error.
 
 ## Updating infrastructure
 

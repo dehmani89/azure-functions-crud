@@ -1,55 +1,157 @@
+# =============================================================================
+#  deploy.yml — GitHub Actions workflow that deploys the Function App.
+# =============================================================================
+#
+#  WHAT IT DOES:
+#    1. Triggers on a push to `main` (or a manual run).
+#    2. Installs production npm dependencies on the runner.
+#    3. Logs in to Azure using OIDC (no long-lived secret needed).
+#    4. Uploads the project as a zip to the Function App.
+#    5. Smoke-tests the public /healthcheck endpoint.
+#
+#  LEGEND (same convention as the Bicep files):
+#    [YOURS]    — A value YOU pick. Renaming is fine.
+#    [FIXED]    — A literal string GitHub Actions or Azure REQUIRES exactly.
+#                 Changing it will break the workflow.
+#    [PROPERTY] — A reserved GitHub Actions YAML key. You can't rename the
+#                 key on the left side; the value may still be customizable.
+# =============================================================================
+
+# [PROPERTY] `name` — what shows up in the GitHub Actions UI.
+# [YOURS]    "Deploy to Azure Functions" — any string you like.
 name: Deploy to Azure Functions
 
+# [PROPERTY] `on` — the event(s) that trigger this workflow.
 on:
+  # [PROPERTY] `push` — fires when commits are pushed to the listed branches.
   push:
+    # [PROPERTY] `branches` — a list of branch patterns. [YOURS] which branches
+    #            you watch. We watch only `main` because that's what our
+    #            federated credential's `environment: production` is gated on.
     branches: [main]
+  # [PROPERTY] `workflow_dispatch` — adds a "Run workflow" button in the UI.
+  #            No value needed; the key by itself enables manual triggers.
   workflow_dispatch:
 
+# [PROPERTY] `permissions` — what the GITHUB_TOKEN (the per-job token GitHub
+# auto-provisions) can do. Defaults are pretty open in some repos, but for
+# OIDC you must EXPLICITLY grant id-token: write.
 permissions:
-  id-token: write       # required for OIDC federation
+  # [FIXED key] `id-token` — GitHub-reserved permission name. The value
+  #             'write' is required so GitHub will mint an OIDC token for the
+  #             job. Without this, `azure/login` with OIDC fails immediately.
+  id-token: write
+  # [FIXED key] `contents` — controls `actions/checkout`'s ability to read
+  #             repo content. 'read' is the minimum needed to clone the repo.
   contents: read
 
+# [PROPERTY] `env` — workflow-level environment variables. Available in every
+# step as ${{ env.NAME }}. The key names below are [YOURS].
 env:
+  # Path passed to functions-action. '.' = repo root.
   AZURE_FUNCTIONAPP_PACKAGE_PATH: '.'
+  # Node version we install on the runner. Matches the runtime declared in
+  # resources.bicep — keep them aligned to avoid local/prod drift.
   NODE_VERSION: '20.x'
 
+# [PROPERTY] `jobs` — one or more parallel jobs. We have just one.
 jobs:
+  # [YOURS] `deploy` — the job ID (used in cross-job references, badges, etc.).
   deploy:
+    # [PROPERTY] `name` — the display name in the UI. [YOURS].
     name: Build and deploy
+    # [PROPERTY] `runs-on` — the runner image.
+    # [FIXED enum] common values: 'ubuntu-latest', 'ubuntu-22.04',
+    #              'windows-latest', 'macos-latest', or a self-hosted label.
     runs-on: ubuntu-latest
+    # [PROPERTY] `environment` — opts the job into the named GitHub
+    #            Environment. CRITICAL: this is what changes the OIDC subject
+    #            claim from `repo:OWNER/REPO:ref:refs/heads/main` to
+    #            `repo:OWNER/REPO:environment:production`. The string here
+    #            MUST exactly match the `githubEnvironment` value baked into
+    #            the federated identity credential (Bicep param). Mismatch
+    #            ⇒ Azure rejects login with `AADSTS700213`.
+    # [YOURS]    name 'production' — pick anything, but mirror it in Bicep.
     environment: production
 
+    # [PROPERTY] `steps` — ordered list. Each runs in a fresh shell.
     steps:
+      # [PROPERTY] `- name:` — display label for the step. [YOURS].
       - name: Checkout source
+        # [PROPERTY] `uses:` — invokes a published action.
+        # [FIXED ref] 'actions/checkout@v4' — official GitHub action that
+        #             clones the repo into the runner workspace. The '@v4'
+        #             pins the major version; bump cautiously.
         uses: actions/checkout@v4
 
       - name: Setup Node.js
+        # [FIXED ref] 'actions/setup-node@v4' — official Node setup action.
         uses: actions/setup-node@v4
+        # [PROPERTY] `with:` — input parameters for the action above.
         with:
+          # [FIXED key] `node-version` is the input name expected by
+          #             actions/setup-node. The value is [YOURS]; here we
+          #             read it from the env var defined at the top.
           node-version: ${{ env.NODE_VERSION }}
+          # [FIXED key] `cache` — tells the action to cache npm's download
+          #             folder. [FIXED enum] 'npm' / 'yarn' / 'pnpm'.
           cache: 'npm'
 
       - name: Install production dependencies
+        # [PROPERTY] `run:` — arbitrary shell command(s) on the runner.
+        # `npm ci` installs exactly what's in package-lock.json (faster and
+        # more reproducible than `npm install`). `--omit=dev` skips
+        # devDependencies — we don't need them at runtime, and they bloat
+        # the deployment package.
         run: npm ci --omit=dev
 
       - name: Azure login (OIDC)
+        # [FIXED ref] 'azure/login@v2' — Microsoft's official login action.
+        #             Supports OIDC federation when client-id+tenant-id+
+        #             subscription-id are provided but no client-secret.
         uses: azure/login@v2
         with:
+          # [FIXED key] `client-id` is the action's input name. The value
+          #             is [YOURS] — the user-assigned managed identity's
+          #             client ID (from Bicep output `azureClientId`).
+          # [FIXED syntax] `${{ vars.AZURE_CLIENT_ID }}` — GitHub expression
+          #                that reads a repository VARIABLE. Variables live
+          #                under Settings → Secrets and variables → Actions
+          #                → Variables. Use `secrets.X` instead of `vars.X`
+          #                for sensitive values; these IDs are NOT sensitive.
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
       - name: Deploy to Azure Functions
+        # [FIXED ref] 'Azure/functions-action@v1' — Microsoft's official
+        #             deploy-to-Functions action. Note the uppercase 'A' in
+        #             the org name; GitHub paths are case-insensitive in
+        #             practice but Microsoft publishes it as 'Azure'.
         uses: Azure/functions-action@v1
         with:
+          # [FIXED key] `app-name` is the input the action looks for.
+          # [YOURS]     value — the Function App's name (Bicep output).
           app-name: ${{ vars.AZURE_FUNCTIONAPP_NAME }}
+          # [FIXED key] `package` — the path or zip the action will upload.
+          #             '.' means "zip the whole repo, respecting .funcignore".
           package: ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}
+          # [FIXED key+enum] `sku` — required for Flex Consumption deploys.
+          # [FIXED enum] valid values: 'consumption', 'premium', 'appservice',
+          #              'flexconsumption'. All lowercase, one word. The value
+          #              must match the hosting plan tier of the target app.
           sku: 'flexconsumption'
 
       - name: Smoke test healthcheck
+        # Multi-line `run:` block. We poll the deployed /healthcheck endpoint
+        # because Functions can take a few seconds to warm up after a new
+        # deployment, and `functions-action` returns success as soon as the
+        # zip lands — not when the app is ready to serve traffic.
         run: |
-          set -euo pipefail
+          set -euo pipefail   # stricter shell: exit on error/unset var/pipe failure
           for i in {1..10}; do
+            # `-s` silent, `-f` fail on non-2xx (so the if-branch only succeeds
+            # when we actually get a 2xx response).
             if curl -sf "https://${{ vars.AZURE_FUNCTIONAPP_NAME }}.azurewebsites.net/api/healthcheck" >/dev/null; then
               echo "healthcheck passed"
               exit 0
@@ -58,4 +160,4 @@ jobs:
             sleep 10
           done
           echo "healthcheck never succeeded"
-          exit 1
+          exit 1   # fail the job so the run shows red in the Actions tab

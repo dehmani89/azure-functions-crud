@@ -1,6 +1,21 @@
-# azure-functions-crud — Local Development Guide
+# azure-functions-crud
 
-A serverless CRUD API (Node.js Azure Functions v4 + PostgreSQL) for managing `products`. This guide covers everything you need to run and test the project on your machine.
+A serverless CRUD API (Node.js Azure Functions v4 + PostgreSQL) for managing `products`.
+
+There are two ways to run it:
+
+| Goal | Where to look |
+|---|---|
+| **Run and test locally** with a Postgres on your machine | This README (sections 1–11 below) |
+| **Deploy to Azure** (Flex Consumption + GitHub Actions OIDC) | [`infra/README.md`](infra/README.md) |
+
+Either way, the application code lives in `src/functions/` and uses the shared `pg.Pool` in `src/db.js`. The infrastructure-as-code lives in `infra/` (Bicep); the CI/CD workflow lives in `.github/workflows/deploy.yml`.
+
+---
+
+## Local Development Guide
+
+The rest of this document covers running the API on your laptop.
 
 ## 1. Prerequisites
 
@@ -214,21 +229,31 @@ psql "postgresql://<YOUR_USERNAME_HERE>:<YOUR_PASSWORD_HERE>@localhost:5432/prod
 
 ```
 azure-functions-crud/
-├── host.json                  # Functions host config
-├── local.settings.json        # Local env vars (git-ignored)
+├── .github/workflows/
+│   └── deploy.yml                 # CI/CD: push to main → deploy to Azure via OIDC
+├── infra/                         # Bicep IaC (see infra/README.md)
+│   ├── main.bicep                 # Subscription-scope entry point
+│   ├── resources.bicep            # RG-scope: Function App, storage, identity, etc.
+│   ├── main.parameters.json       # Parameter values (databaseUrl is a placeholder)
+│   └── README.md                  # Cloud deployment guide
+├── sql/
+│   └── setup.sql                  # Postgres schema + seed data
+├── src/
+│   ├── index.js                   # app.setup({ enableHttpStream: true })
+│   ├── db.js                      # Shared pg.Pool
+│   └── functions/
+│       ├── healthcheck/function.js
+│       └── products/
+│           ├── createProduct/function.js   # POST   /products
+│           ├── getProducts/function.js     # GET    /products
+│           ├── getProductById/function.js  # GET    /products/{id}
+│           ├── updateProduct/function.js   # PUT    /products/{id}
+│           └── deleteProduct/function.js   # DELETE /products/{id}
+├── host.json                      # Functions host config + App Insights sampling
+├── local.settings.json            # Local env vars (git-ignored)
+├── local.settings.json.example    # Template — copy to local.settings.json and fill in
 ├── package.json
-├── sql/setup.sql              # Schema + seed
-└── src/
-    ├── index.js               # app.setup({ enableHttpStream: true })
-    ├── db.js                  # Shared pg.Pool
-    └── functions/
-        ├── healthcheck/function.js
-        └── products/
-            ├── createProduct/function.js   # POST   /products
-            ├── getProducts/function.js     # GET    /products
-            ├── getProductById/function.js  # GET    /products/{id}
-            ├── updateProduct/function.js   # PUT    /products/{id}
-            └── deleteProduct/function.js   # DELETE /products/{id}
+└── .funcignore                    # Files excluded from the deploy package
 ```
 
 ## License

@@ -1,10 +1,17 @@
 *.js.map
 *.ts
 .git*
+.github
 .vscode
+.idea
 __azurite_db*__.json
 __blobstorage__
 __queuestorage__
 local.settings.json
+local.settings.json.example
 test
 tsconfig.json
+infra
+sql
+*.md
+LICENSE

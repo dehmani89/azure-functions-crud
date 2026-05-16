@@ -1,0 +1,24 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "location": {
+      "value": "westus2"
+    },
+    "namePrefix": {
+      "value": "prodcrud"
+    },
+    "resourceGroupName": {
+      "value": "rg-prodcrud"
+    },
+    "githubRepository": {
+      "value": "dehmani89/azure-functions-crud"
+    },
+    "githubBranch": {
+      "value": "main"
+    },
+    "databaseUrl": {
+      "value": "REPLACE_ME: postgresql://<user>:<password>@<host>:5432/<db>?sslmode=require"
+    }
+  }
+}

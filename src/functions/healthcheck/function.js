@@ -8,13 +8,13 @@ app.http('healthcheck', {
         try {
             return {
                 status: 200,
-                body: JSON.stringify({ status: 'Service Up 2' }),
+                body: JSON.stringify({ status: 'Service Up' }),
             };
         } catch (error) {
             context.log.error('Healthcheck failure:', error);
             return {
                 status: 500,
-                body: JSON.stringify({ status: 'Service Down 2' }),
+                body: JSON.stringify({ status: 'Service Down' }),
             };
         }
     }

@@ -571,10 +571,15 @@ resource apiOps 'Microsoft.ApiManagement/service/apis/operations@2023-09-01-prev
 // -----------------------------------------------------------------------------
 // `jwtValidationEnabled` toggles whether we enforce JWT validation. When
 // false, the policy is just `<base />` plumbing so the deploy succeeds with
-// placeholder JWT params. Flip to true after configuring Entra ID (or any
-// OIDC provider) and redeploy.
+// placeholder JWT params. Flip to true after configuring your OIDC provider
+// (Okta in our case) and redeploy.
+//
+// IMPORTANT: Bicep multi-line strings (''') do NOT support ${...} interpolation
+// — the placeholders would be passed to APIM as literal text and rejected with
+// "The field url is invalid". We use the `format()` function instead, which
+// substitutes {0}, {1}, ... at template-render time.
 // -----------------------------------------------------------------------------
-var apiPolicyXml = jwtValidationEnabled ? '''<policies>
+var apiPolicyXmlEnabled = format('''<policies>
   <inbound>
     <base />
     <validate-jwt header-name="Authorization"
@@ -583,19 +588,21 @@ var apiPolicyXml = jwtValidationEnabled ? '''<policies>
                   require-expiration-time="true"
                   require-scheme="Bearer"
                   require-signed-tokens="true">
-      <openid-config url="${openIdConfigUrl}" />
+      <openid-config url="{0}" />
       <audiences>
-        <audience>${jwtAudience}</audience>
+        <audience>{1}</audience>
       </audiences>
       <issuers>
-        <issuer>${jwtIssuerUrl}</issuer>
+        <issuer>{2}</issuer>
       </issuers>
     </validate-jwt>
   </inbound>
   <backend><base /></backend>
   <outbound><base /></outbound>
   <on-error><base /></on-error>
-</policies>''' : '''<policies>
+</policies>''', openIdConfigUrl, jwtAudience, jwtIssuerUrl)
+
+var apiPolicyXmlDisabled = '''<policies>
   <inbound>
     <base />
     <!-- JWT validation is DISABLED. Set jwtValidationEnabled=true in main.parameters.json
@@ -605,6 +612,8 @@ var apiPolicyXml = jwtValidationEnabled ? '''<policies>
   <outbound><base /></outbound>
   <on-error><base /></on-error>
 </policies>'''
+
+var apiPolicyXml = jwtValidationEnabled ? apiPolicyXmlEnabled : apiPolicyXmlDisabled
 
 resource apiPolicy 'Microsoft.ApiManagement/service/apis/policies@2023-09-01-preview' = {
   parent: api

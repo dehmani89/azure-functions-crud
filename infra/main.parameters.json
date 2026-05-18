@@ -19,6 +19,24 @@
     },
     "databaseUrl": {
       "value": "REPLACE_ME: postgresql://<user>:<password>@<host>:5432/<db>?sslmode=require"
+    },
+    "apimPublisherEmail": {
+      "value": "ADehmani@net32.com"
+    },
+    "apimPublisherName": {
+      "value": "azure-functions-crud"
+    },
+    "jwtValidationEnabled": {
+      "value": true
+    },
+    "openIdConfigUrl": {
+      "value": "https://integrator-3704886.okta.com/oauth2/default/.well-known/oauth-authorization-server"
+    },
+    "jwtIssuerUrl": {
+      "value": "https://integrator-3704886.okta.com/oauth2/default"
+    },
+    "jwtAudience": {
+      "value": "api://default"
     }
   }
 }

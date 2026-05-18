@@ -16,8 +16,32 @@ This directory provisions the Azure resources required to host `azure-functions-
 | Federated identity credential | Trusts `repo:<owner>/<repo>:environment:production` (matches the workflow's `environment:` claim) |
 | Role assignment: Website Contributor | On the Function App — lets the workflow deploy code |
 | Role assignment: Storage Blob Data Contributor | On the storage account — lets the workflow upload the package |
+| **API Management (Consumption tier)** | Public gateway in front of the Function App with optional `validate-jwt` policy. URL: `https://<apim>.azure-api.net/api/...` |
 
 App settings configured on the Function App: `AzureWebJobsStorage`, `DEPLOYMENT_STORAGE_CONNECTION_STRING`, `APPLICATIONINSIGHTS_CONNECTION_STRING`, `DATABASE_URL`, `NODE_ENV=production`.
+
+### Routing
+
+```
+                    /healthcheck  ──── public (no JWT) ─────┐
+Internet                                                    │
+   │                                                        │
+   ▼  https://<apim>.azure-api.net/api/...                  │
+[ APIM Consumption ]                                        │
+   │     │                                                  │
+   │     └── /api/products/*  ── validate-jwt (Okta) ──┐    │
+   │                                                   │    │
+   ▼  https://<func>.azurewebsites.net/api/...         ▼    ▼
+[ Function App ] ─────────────────────────────────────── …
+   │
+   ▼
+[ PostgreSQL ]
+```
+
+- **`/api/healthcheck`** is intentionally public — its APIM operation has an override policy with no `<base />` in `<inbound>`, which skips the API-level JWT check.
+- **`/api/products/*`** inherits the API-level `validate-jwt` policy. When `jwtValidationEnabled=true`, every request must carry a valid Okta Bearer token or APIM returns `401 Unauthorized` before the request ever reaches the Function App.
+
+The Function App's hostname remains publicly reachable for now (the only way to lock it down is to switch the functions to `authLevel: 'function'` or add IP restrictions for APIM's outbound IPs — out of scope for this POC).
 
 ## Files
 
@@ -107,20 +131,86 @@ Push to `main` (or run the workflow manually from the Actions tab). The workflow
 
 ## Verify the deployment
 
-Once the workflow shows a green check, hit the public endpoints:
+Once the workflow shows a green check, hit the public endpoints. After adding APIM you can use either entry point:
 
 ```bash
-APP=<functionAppName>        # e.g. func-prodcrud-j3xqdaliqzms4
-BASE="https://$APP.azurewebsites.net/api"
+# Direct Function App URL (always reachable)
+FUNC=<functionAppName>                                  # e.g. func-prodcrud-j3xqdaliqzms4
+curl -i https://$FUNC.azurewebsites.net/api/healthcheck
 
-curl -i $BASE/healthcheck                     # 200 {"status":"Service Up 2"}
-curl -s $BASE/products | jq '. | length'      # row count from your Postgres
-curl -s -X POST $BASE/products \
-  -H "Content-Type: application/json" \
-  -d '{"name":"Test","description":"smoke","price":1.00}' | jq
+# APIM gateway URL (use this once APIM is provisioned)
+APIM_URL=$(az deployment sub show --name azfn-crud-bootstrap --query properties.outputs.apimGatewayUrl.value -o tsv)
+curl -i $APIM_URL/api/healthcheck
+curl -s $APIM_URL/api/products | jq '. | length'
 ```
 
 If `/healthcheck` returns 200 but `/products` returns 500, that's almost always the Postgres firewall (see Step 2). Application Insights → Failures will show the exact connection error.
+
+## Enabling JWT validation with Okta
+
+By default `jwtValidationEnabled` is `false` so APIM is a transparent passthrough. **`/api/healthcheck` is permanently exempt** (it carries an operation-level policy override that skips the API-level JWT check). All other routes (`/api/products/*`) require a valid Bearer token once JWT enforcement is on.
+
+### 1. Set up an Okta authorization server + API
+
+In the Okta admin console:
+
+- **Security → API → Authorization Servers.** You can use the built-in `default` server or create a new one (e.g. `products-api`). Note its **Issuer URI** — it looks like `https://<your-org>.okta.com/oauth2/default` or `https://<your-org>.okta.com/oauth2/<auth-server-id>`.
+- **Audience** is configured on the authorization server itself (Settings tab). The default is `api://default`. Change it to something specific to this API, e.g. `api://products`, if you want.
+- (Optional) **Scopes** tab — define a scope like `products.read` if you plan to do scope-based authorization later.
+
+### 2. Fill in `infra/main.parameters.json`
+
+Replace the four JWT-related parameters with your Okta values:
+
+```jsonc
+"jwtValidationEnabled":  { "value": true                                                                       },
+"openIdConfigUrl":       { "value": "https://<your-org>.okta.com/oauth2/default/.well-known/openid-configuration" },
+"jwtIssuerUrl":          { "value": "https://<your-org>.okta.com/oauth2/default"                                  },
+"jwtAudience":           { "value": "api://default"                                                              }
+```
+
+If you created a custom authorization server, swap `default` for its ID in all three URLs and use your custom audience.
+
+### 3. Redeploy
+
+```bash
+az deployment sub create \
+  --location westus2 \
+  --name azfn-crud-bootstrap \
+  --template-file infra/main.bicep \
+  --parameters infra/main.parameters.json \
+  --parameters databaseUrl='postgresql://...'
+```
+
+Bicep updates the APIM policy in place — the next request to `/api/products/*` will be rejected without a token. `/api/healthcheck` continues to work unauthenticated.
+
+### 4. Test
+
+```bash
+APIM_URL=$(az deployment sub show --name azfn-crud-bootstrap --query properties.outputs.apimGatewayUrl.value -o tsv)
+
+# Public — always works
+curl -i $APIM_URL/api/healthcheck
+
+# Protected — without token: 401
+curl -i $APIM_URL/api/products
+
+# Protected — with a valid Okta access token: 200
+# (use the OAuth client of your choice to get a token; example with `okta` CLI:
+#    okta apps:tokens get --app=<app-id>
+# or via password grant / client credentials with curl + your auth server's token endpoint)
+TOKEN=<paste-okta-access-token>
+curl -i -H "Authorization: Bearer $TOKEN" $APIM_URL/api/products
+```
+
+### Troubleshooting
+
+| Symptom | Likely cause |
+|---|---|
+| 401 with `IP forbidden` or `Token is not yet valid` | Clock skew between client and Okta — ensure system time is correct. |
+| 401 with `JWT validation failed` and `Claim value mismatch: aud` | `jwtAudience` doesn't match the `aud` claim in the token. Decode the JWT at jwt.io and compare. |
+| 401 with `Unable to retrieve OpenID Connect metadata` | `openIdConfigUrl` is wrong, or your Okta org is private and APIM can't reach it (Consumption tier is public-internet only). |
+| Healthcheck also returns 401 | The operation-level override policy didn't deploy. Check `apiOps[healthcheck-get]/policy` in the portal — its `<inbound>` should NOT contain `<base />`. |
 
 ## Updating infrastructure
 
@@ -149,4 +239,7 @@ This removes everything Bicep created. Your external Postgres database is untouc
 - Flex Consumption: pay-per-execution + ~$0.000016/GB-s memory. Idle = $0.
 - Storage account (LRS, minimal data): < $1/mo.
 - Log Analytics + App Insights: free tier covers ~5GB/mo ingest; expect < $1/mo at POC volume.
+- APIM Consumption: $0 idle, ~$3.50 per million calls.
 - Total floor: a few dollars/month at low traffic.
+
+> APIM Consumption provisions in ~5-10 minutes on first deploy. Subsequent deploys are fast (just policy/operation updates). If you re-run the deployment and the APIM service hasn't fully provisioned yet, ARM will wait until it's ready.

@@ -72,6 +72,35 @@ param githubEnvironment string = 'production'
 param databaseUrl string
 
 // -----------------------------------------------------------------------------
+// API Management parameters
+// -----------------------------------------------------------------------------
+
+@description('Contact email shown on the APIM portal. Must be syntactically valid; Azure does not verify deliverability.')
+// [YOURS] — any valid-looking email address.
+param apimPublisherEmail string
+
+@description('Publisher/organization name displayed on the APIM portal.')
+// [YOURS] — any string. Defaults to the namePrefix for convenience.
+param apimPublisherName string = namePrefix
+
+@description('When true, APIM enforces validate-jwt on every request. Leave false until the JWT params below are filled in, otherwise every request returns 401.')
+// [YOURS] — bool. Default false so the initial deploy succeeds with empty
+// JWT params; flip to true after configuring your identity provider.
+param jwtValidationEnabled bool = false
+
+@description('OpenID Connect metadata URL. Okta example: https://<org>.okta.com/oauth2/default/.well-known/openid-configuration')
+// [YOURS] — required only when jwtValidationEnabled=true.
+param openIdConfigUrl string = ''
+
+@description('Expected JWT issuer (iss claim). Okta example: https://<org>.okta.com/oauth2/default')
+// [YOURS] — required only when jwtValidationEnabled=true.
+param jwtIssuerUrl string = ''
+
+@description('Expected JWT audience (aud claim). Okta default: api://default (or whatever you configured on the authorization server).')
+// [YOURS] — required only when jwtValidationEnabled=true.
+param jwtAudience string = ''
+
+// -----------------------------------------------------------------------------
 // RESOURCE GROUP — the container everything else lives in.
 // -----------------------------------------------------------------------------
 
@@ -114,6 +143,12 @@ module resources 'resources.bicep' = {
     githubRepository: githubRepository
     githubEnvironment: githubEnvironment
     databaseUrl: databaseUrl
+    apimPublisherEmail: apimPublisherEmail
+    apimPublisherName: apimPublisherName
+    jwtValidationEnabled: jwtValidationEnabled
+    openIdConfigUrl: openIdConfigUrl
+    jwtIssuerUrl: jwtIssuerUrl
+    jwtAudience: jwtAudience
   }
 }
 
@@ -135,3 +170,5 @@ output azureClientId string = resources.outputs.azureClientId            // → 
 // they return facts about the deployment target, not values you set.
 output azureTenantId string = subscription().tenantId                    // → GitHub var AZURE_TENANT_ID
 output azureSubscriptionId string = subscription().subscriptionId        // → GitHub var AZURE_SUBSCRIPTION_ID
+output apimName string = resources.outputs.apimName                      // APIM service name
+output apimGatewayUrl string = resources.outputs.apimGatewayUrl          // Public gateway URL (use this as your new API base)

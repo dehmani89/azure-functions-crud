@@ -10,6 +10,8 @@
 //    4. Function App (Linux, Node 20)
 //    5. User-assigned managed identity + GitHub OIDC federated credential
 //    6. Role assignments granting the identity permission to deploy code
+//    7. API Management (Consumption tier) in front of the Function App,
+//       with an optional JWT validation policy.
 //
 //  See main.bicep for the LEGEND ([YOURS] / [FIXED] / [PROPERTY]).
 // =============================================================================
@@ -34,6 +36,24 @@ param githubEnvironment string
 @description('PostgreSQL connection string. Stored as DATABASE_URL app setting.')
 @secure()
 param databaseUrl string
+
+@description('Contact email shown on the APIM portal. Must be a real address Azure will accept.')
+param apimPublisherEmail string
+
+@description('Publisher/organization name displayed on the APIM portal.')
+param apimPublisherName string
+
+@description('When true, APIM enforces validate-jwt on every request. Leave false until the JWT params below are filled in, otherwise every request returns 401.')
+param jwtValidationEnabled bool
+
+@description('OpenID Connect metadata URL. Okta example: https://<org>.okta.com/oauth2/default/.well-known/openid-configuration')
+param openIdConfigUrl string
+
+@description('Expected JWT issuer (`iss` claim). Okta example: https://<org>.okta.com/oauth2/default')
+param jwtIssuerUrl string
+
+@description('Expected JWT audience (`aud` claim). Okta default: `api://default` (or whatever you configured on the authorization server).')
+param jwtAudience string
 
 // -----------------------------------------------------------------------------
 // VARIABLES — computed names used by the resources below.
@@ -63,6 +83,9 @@ var functionAppName = take('func-${namePrefix}-${resourceToken}', 60)
 var lawName = take('log-${namePrefix}-${resourceToken}', 63)
 var aiName = take('appi-${namePrefix}-${resourceToken}', 260)
 var identityName = 'id-${namePrefix}-gh-deploy'
+// APIM service name: 1-50 chars, alphanumeric + hyphens, GLOBALLY unique
+// (becomes part of the gateway URL: https://<apimName>.azure-api.net).
+var apimName = take('apim-${namePrefix}-${resourceToken}', 50)
 // The container the Function App reads its zipped deployment package from.
 // [YOURS] — any valid container name. Azure Functions doesn't care what it's
 // called; the Function App points at it explicitly below.
@@ -418,6 +441,181 @@ resource githubStorageRoleAssignment 'Microsoft.Authorization/roleAssignments@20
 }
 
 // =============================================================================
+// 7. API MANAGEMENT (Consumption tier) IN FRONT OF THE FUNCTION APP
+// =============================================================================
+// APIM gives us a stable public entry point with policies (rate limiting,
+// JWT validation, etc.) decoupled from the Function App.
+//
+// Consumption tier specifics:
+//   - Serverless: pay per call (~$3.50 per million calls, no idle fee).
+//   - Provisions in ~5-10 min (vs 30-45 min for Developer/Basic+).
+//   - No developer portal, no VNET, no static IP.
+//   - Supports validate-jwt, set-backend-service, rate-limit, and most policies.
+// =============================================================================
+
+resource apim 'Microsoft.ApiManagement/service@2023-09-01-preview' = {
+  name: apimName
+  location: location
+  sku: {
+    // [FIXED enum] tier+name pairs: 'Consumption'/'Consumption' (serverless),
+    //              'Developer'/'Developer' (single instance, dev only),
+    //              'Basic'/'Basic', 'Standard'/'Standard', 'Premium'/'Premium'.
+    name: 'Consumption'
+    capacity: 0   // [FIXED] must be 0 on Consumption (capacity is ignored).
+  }
+  // System-assigned identity. APIM can use this to authenticate to backends
+  // (e.g. call the Function App with managed-identity auth) without storing
+  // keys. Not currently used by any policy here, but useful to enable.
+  identity: {
+    type: 'SystemAssigned'
+  }
+  properties: {
+    // [PROPERTY] publisherEmail/publisherName — required. They appear on the
+    //            APIM portal page. The email must be a syntactically valid
+    //            address; Azure does not verify deliverability.
+    publisherEmail: apimPublisherEmail
+    publisherName: apimPublisherName
+  }
+}
+
+// -----------------------------------------------------------------------------
+// The API definition — describes the Products API hosted on APIM.
+// -----------------------------------------------------------------------------
+// Final URL pattern at the APIM gateway:
+//   https://<apim>.azure-api.net/api/products
+//   https://<apim>.azure-api.net/api/healthcheck
+//   etc.
+// APIM strips `path` from the incoming URL and forwards the remainder to
+// `serviceUrl`. We mirror the Function App's /api prefix so URLs look the same.
+// -----------------------------------------------------------------------------
+resource api 'Microsoft.ApiManagement/service/apis@2023-09-01-preview' = {
+  parent: apim
+  name: 'products-api'                         // [YOURS] internal id
+  properties: {
+    displayName: 'Products API'                // [YOURS] shown in the portal
+    path: 'api'                                // [YOURS] becomes /api/... at the gateway
+    protocols: [ 'https' ]                     // [FIXED enum] 'http' / 'https' / 'ws' / 'wss'
+    serviceUrl: 'https://${functionApp.properties.defaultHostName}/api'
+    subscriptionRequired: false                // [YOURS] true if you want APIM API keys
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Operations — one per HTTP route. APIM does not support a wildcard method,
+// so each (method, path) pair is its own operation.
+//
+// /healthcheck is split out of the loop because it gets a DIFFERENT policy:
+// healthcheck must stay public even when validate-jwt is enabled API-wide.
+// Every other route inherits the API-level policy (with JWT enforcement).
+// -----------------------------------------------------------------------------
+
+// PUBLIC operation — healthcheck. No JWT required, ever.
+resource opHealthcheck 'Microsoft.ApiManagement/service/apis/operations@2023-09-01-preview' = {
+  parent: api
+  name: 'healthcheck-get'
+  properties: {
+    displayName: 'Health check'
+    method: 'GET'
+    urlTemplate: '/healthcheck'
+    templateParameters: []
+  }
+}
+
+// Operation-level policy on /healthcheck that OVERRIDES the API-level policy.
+// Key trick: the <inbound> block here has NO <base /> element. In APIM,
+// omitting <base /> means "do NOT inherit the parent scope's policies". So
+// when the API-level policy enforces validate-jwt, this operation skips it.
+resource opHealthcheckPolicy 'Microsoft.ApiManagement/service/apis/operations/policies@2023-09-01-preview' = {
+  parent: opHealthcheck
+  name: 'policy'                                // [FIXED] only valid name for policy
+  properties: {
+    format: 'xml'
+    value: '''<policies>
+  <inbound>
+    <!-- Intentionally NO <base />: this skips the API-level validate-jwt so /healthcheck stays public. -->
+  </inbound>
+  <backend><base /></backend>
+  <outbound><base /></outbound>
+  <on-error><base /></on-error>
+</policies>'''
+  }
+}
+
+// PROTECTED operations — every product route. These inherit the API-level
+// policy unchanged (no per-operation policy override), so when
+// jwtValidationEnabled=true they require a valid Bearer token.
+var apimOperations = [
+  // [YOURS] name is the internal operation id; displayName is the portal label.
+  { name: 'products-list',   displayName: 'List products',    method: 'GET',    urlTemplate: '/products',     params: [] }
+  { name: 'products-get',    displayName: 'Get product by ID',method: 'GET',    urlTemplate: '/products/{id}',params: [ { name: 'id', type: 'string', required: true } ] }
+  { name: 'products-create', displayName: 'Create product',   method: 'POST',   urlTemplate: '/products',     params: [] }
+  { name: 'products-update', displayName: 'Update product',   method: 'PUT',    urlTemplate: '/products/{id}',params: [ { name: 'id', type: 'string', required: true } ] }
+  { name: 'products-delete', displayName: 'Delete product',   method: 'DELETE', urlTemplate: '/products/{id}',params: [ { name: 'id', type: 'string', required: true } ] }
+]
+
+// [FIXED syntax] `[for x in arr: { ... }]` — Bicep loop. Creates one resource
+//                per array element. The collection is itself called `apiOps`.
+resource apiOps 'Microsoft.ApiManagement/service/apis/operations@2023-09-01-preview' = [for op in apimOperations: {
+  parent: api
+  name: op.name
+  properties: {
+    displayName: op.displayName
+    method: op.method                          // [FIXED enum per op] GET/POST/PUT/DELETE/PATCH/HEAD/OPTIONS
+    urlTemplate: op.urlTemplate                // [YOURS]
+    templateParameters: op.params              // [PROPERTY] empty array when no path params
+  }
+}]
+
+// -----------------------------------------------------------------------------
+// API-level policy: validate-jwt + standard pass-through.
+// -----------------------------------------------------------------------------
+// `jwtValidationEnabled` toggles whether we enforce JWT validation. When
+// false, the policy is just `<base />` plumbing so the deploy succeeds with
+// placeholder JWT params. Flip to true after configuring Entra ID (or any
+// OIDC provider) and redeploy.
+// -----------------------------------------------------------------------------
+var apiPolicyXml = jwtValidationEnabled ? '''<policies>
+  <inbound>
+    <base />
+    <validate-jwt header-name="Authorization"
+                  failed-validation-httpcode="401"
+                  failed-validation-error-message="Unauthorized"
+                  require-expiration-time="true"
+                  require-scheme="Bearer"
+                  require-signed-tokens="true">
+      <openid-config url="${openIdConfigUrl}" />
+      <audiences>
+        <audience>${jwtAudience}</audience>
+      </audiences>
+      <issuers>
+        <issuer>${jwtIssuerUrl}</issuer>
+      </issuers>
+    </validate-jwt>
+  </inbound>
+  <backend><base /></backend>
+  <outbound><base /></outbound>
+  <on-error><base /></on-error>
+</policies>''' : '''<policies>
+  <inbound>
+    <base />
+    <!-- JWT validation is DISABLED. Set jwtValidationEnabled=true in main.parameters.json
+         (and fill in openIdConfigUrl / jwtAudience / jwtIssuerUrl) to enforce. -->
+  </inbound>
+  <backend><base /></backend>
+  <outbound><base /></outbound>
+  <on-error><base /></on-error>
+</policies>'''
+
+resource apiPolicy 'Microsoft.ApiManagement/service/apis/policies@2023-09-01-preview' = {
+  parent: api
+  name: 'policy'                               // [FIXED] only valid name for policy
+  properties: {
+    format: 'xml'                              // [FIXED enum] 'xml' / 'xml-link' / 'rawxml' / 'rawxml-link'
+    value: apiPolicyXml
+  }
+}
+
+// =============================================================================
 // OUTPUTS — surfaced by main.bicep to the CLI.
 // =============================================================================
 // Output names are [YOURS]; main.bicep references them via `resources.outputs.<name>`.
@@ -427,3 +625,5 @@ output functionAppHostname string = functionApp.properties.defaultHostName
 output azureClientId string = githubIdentity.properties.clientId
 output storageAccountName string = storage.name
 output appInsightsName string = appInsights.name
+output apimName string = apim.name
+output apimGatewayUrl string = apim.properties.gatewayUrl

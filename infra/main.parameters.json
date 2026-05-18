@@ -30,7 +30,7 @@
       "value": true
     },
     "openIdConfigUrl": {
-      "value": "https://integrator-3704886.okta.com/oauth2/default/.well-known/oauth-authorization-server"
+      "value": "https://integrator-3704886.okta.com/oauth2/default/.well-known/openid-configuration"
     },
     "jwtIssuerUrl": {
       "value": "https://integrator-3704886.okta.com/oauth2/default"

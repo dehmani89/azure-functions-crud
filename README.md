@@ -1,7 +1,7 @@
 # azure-functions-crud
 
 A serverless CRUD API (Node.js Azure Functions v4 + PostgreSQL) for managing `products`.
-
+![Azure Serverless CRUD API with APIM and Okta.png](architecture/Azure%20Serverless%20CRUD%20API%20with%20APIM%20and%20Okta.png)
 There are two ways to run it:
 
 | Goal | Where to look |

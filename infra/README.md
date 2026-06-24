@@ -137,6 +137,28 @@ This app uses **two environments**, mapped from git branches by the CI/CD workfl
 
 Run the bootstrap below **once per environment** (dev first, then prod). The order matters: create the GitHub Environment **before** running Bicep, otherwise the federated credential won't match anything the workflow can present.
 
+### Step 0 — Register Azure resource providers (first-time-per-subscription only)
+
+On a **brand-new subscription** the resource providers this template uses are not yet registered. Azure auto-registers them on first use, but registration is asynchronous and can take several minutes — and the deployment will **fail** if it tries to use a provider that is still `Registering`. The classic symptom is APIM failing with:
+
+```
+Request to resource '…/Microsoft.ApiManagement/service/<apim>/credentials/v2/systemassigned…'
+failed with StatusCode: NotFound … "The resource was not found."
+```
+
+(APIM is creating its system-assigned managed identity before `Microsoft.ManagedIdentity` has finished registering.) Register everything up front and wait for all six to report `Registered`:
+
+```bash
+for ns in Microsoft.ManagedIdentity Microsoft.ApiManagement Microsoft.Web Microsoft.Storage Microsoft.OperationalInsights Microsoft.Insights; do
+  az provider register --namespace "$ns"
+done
+
+# Poll until EVERY line says "Registered" (APIM is the slowest — a few minutes):
+watch -n 15 'for ns in Microsoft.ManagedIdentity Microsoft.ApiManagement Microsoft.Web Microsoft.Storage Microsoft.OperationalInsights Microsoft.Insights; do printf "%-35s " "$ns"; az provider show -n "$ns" --query registrationState -o tsv; done'
+```
+
+You only need to do this once per subscription. If you re-run a deployment that failed for this reason, it's idempotent — already-created resources are reused.
+
 ### Step 1 — Create the `dev` and `prod` environments in GitHub
 
 In `dehmani89/azure-functions-crud` → **Settings → Environments → New environment** → create **two** environments named exactly `dev` and `prod`. No protection rules required for a POC (you may later add a required-reviewer rule on `prod`). These names are what make GitHub Actions emit the `repo:…:environment:dev` / `repo:…:environment:prod` OIDC subjects the federated credentials trust.

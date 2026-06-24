@@ -1,5 +1,11 @@
--- Create the database
-CREATE DATABASE "productsDB";
+-- Create the database only if it doesn't already exist.
+-- Postgres has no CREATE DATABASE IF NOT EXISTS, so we use psql's \gexec: the
+-- SELECT emits the CREATE statement only when the guard finds no matching row,
+-- and \gexec then executes whatever the SELECT returned (nothing if it exists).
+-- Safe to re-run, and works whether you point psql at 'postgres' or at an
+-- already-created 'productsDB'.
+SELECT 'CREATE DATABASE "productsDB"'
+  WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'productsDB')\gexec
 
 -- Connect to the productsDB database (psql meta-command)
 \c "productsDB"

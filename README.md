@@ -69,7 +69,7 @@ docker run --name products-pg \
 
 ## 4. Initialize the Database
 
-Run the schema + seed script (creates the `products` table and inserts 15 dental-equipment rows):
+Run the schema + seed script. It creates the `productsDB` database if it doesn't already exist (idempotent), then the `products` table, and inserts 15 dental-equipment rows. It's safe to run whether you point `psql` at `postgres` or at an existing `productsDB`:
 
 ```bash
 psql "postgresql://<YOUR_USERNAME_HERE>:<YOUR_PASSWORD_HERE>@localhost:5432/productsDB" -f sql/setup.sql
@@ -238,7 +238,8 @@ azure-functions-crud/
 │   ├── main.parameters.prod.json  # Prod parameter values (databaseUrl is a placeholder)
 │   └── README.md                  # Cloud deployment guide
 ├── sql/
-│   └── setup.sql                  # Postgres schema + seed data
+│   ├── setup.sql                  # Creates productsDB (idempotent) + products schema & seed data
+│   └── test-connection.js         # Standalone DB connectivity smoke test: `node sql/test-connection.js`
 ├── src/
 │   ├── index.js                   # app.setup({ enableHttpStream: true })
 │   ├── db.js                      # Shared pg.Pool

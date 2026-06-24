@@ -21,6 +21,13 @@
 # [YOURS]    "Deploy to Azure Functions" — any string you like.
 name: Deploy to Azure Functions
 
+# [PROPERTY] `run-name` — the title of each individual run in the Actions list.
+# Expressions are evaluated per run, so this shows the branch and the target
+# environment at a glance, e.g. "Deploy develop → dev" / "Deploy main → prod".
+# (run-name only has access to the `github` and `inputs` contexts, not `env`,
+# so the branch→env ternary is repeated here.)
+run-name: Deploy ${{ github.ref_name }} → ${{ github.ref == 'refs/heads/main' && 'prod' || 'dev' }}
+
 # [PROPERTY] `on` — the event(s) that trigger this workflow.
 on:
   # [PROPERTY] `push` — fires when commits are pushed to the listed branches.
@@ -62,8 +69,10 @@ env:
 jobs:
   # [YOURS] `deploy` — the job ID (used in cross-job references, badges, etc.).
   deploy:
-    # [PROPERTY] `name` — the display name in the UI. [YOURS].
-    name: Build and deploy
+    # [PROPERTY] `name` — the display name in the UI. [YOURS]. The trailing
+    #            expression appends the target environment so the job reads
+    #            "Build and deploy (dev)" / "Build and deploy (prod)".
+    name: Build and deploy (${{ github.ref == 'refs/heads/main' && 'prod' || 'dev' }})
     # [PROPERTY] `runs-on` — the runner image.
     # [FIXED enum] common values: 'ubuntu-latest', 'ubuntu-22.04',
     #              'windows-latest', 'macos-latest', or a self-hosted label.

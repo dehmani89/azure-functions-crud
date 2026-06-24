@@ -1,3 +1,9 @@
+-- Create the database
+CREATE DATABASE "productsDB";
+
+-- Connect to the productsDB database (psql meta-command)
+\c "productsDB"
+
 -- Create the products table
 CREATE TABLE products (
     id SERIAL PRIMARY KEY,
@@ -35,5 +41,9 @@ SELECT * FROM products WHERE id = 1;
 -- Sample UPDATE
 UPDATE products SET name = 'Dental Chair 1', updated_at = CURRENT_TIMESTAMP WHERE id = 1;
 
--- Sample DELETE
-DELETE FROM products WHERE id = 1;
+-- Sample Create for the 16th record
+INSERT INTO products (name, description, price) VALUES
+    ('Dental Chair 2', 'Ergonomic patient chair with adjustable positioning', 1500.00);
+
+-- Sample DELETE for the 16th record
+DELETE FROM products WHERE id = 16;

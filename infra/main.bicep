@@ -6,7 +6,7 @@
 //    az deployment sub create \
 //      --location <region> \
 //      --template-file infra/main.bicep \
-//      --parameters infra/main.parameters.json
+//      --parameters infra/main.parameters.dev.json   # or .prod.json
 //
 //  WHAT IT DOES:
 //    1. Creates (or reuses) a resource group.
@@ -31,27 +31,37 @@
 targetScope = 'subscription'
 
 // -----------------------------------------------------------------------------
-// PARAMETERS — values you supply at deploy time (via main.parameters.json
-// or with extra --parameters key=value flags on the CLI).
+// PARAMETERS — values you supply at deploy time (via the per-environment
+// main.parameters.<env>.json files or with extra --parameters key=value flags).
 // -----------------------------------------------------------------------------
 
 @description('Azure region for all resources. Must support Flex Consumption (westus2, eastus, eastus2, westeurope, etc.).')
 // [YOURS] — any Flex-supported Azure region. Default 'westus2' is just a
-// sensible starting point; override in main.parameters.json.
+// sensible starting point; override in main.parameters.<env>.json.
 param location string = 'westus2'
 
-@description('Short, lowercase prefix used to derive resource names (3-12 chars, alphanumeric).')
-@minLength(3)
+@description('Workload name woven into every resource name. This is the "what does it do" word, e.g. products. (2-12 chars, lowercase alphanumeric.)')
+@minLength(2)
 @maxLength(12)
 // [YOURS] — appears in every resource name (storage, plan, function app, ...).
 // Keep it short because Azure has strict length limits on some names
-// (storage = 24 chars, app names = 60).
-param namePrefix string
+// (storage = 24 chars, app names = 60). For this app it is 'products'.
+param workloadName string = 'products'
+
+@description('Deployment environment. Woven into every resource name so dev/test/prod are easy to tell apart.')
+@allowed([
+  'dev'
+  'test'
+  'staging'
+  'prod'
+])
+// [YOURS] — the environment segment. Final names look like func-products-dev-<hash>.
+param environment string = 'dev'
 
 @description('Name of the resource group to create (or reuse if it already exists in this subscription).')
-// [YOURS] — defaults to 'rg-<namePrefix>' which follows Microsoft's
-// recommended naming convention. The 'rg-' prefix is convention, not required.
-param resourceGroupName string = 'rg-${namePrefix}'
+// [YOURS] — defaults to 'rg-<workload>-<env>' (e.g. rg-products-dev) following the
+// <type>-<workload>-<env> convention. The 'rg-' prefix is convention, not required.
+param resourceGroupName string = 'rg-${workloadName}-${environment}'
 
 @description('GitHub repository the federated credential will trust, in "owner/repo" form.')
 // [YOURS] — the GitHub repo allowed to deploy via OIDC. Format is enforced by
@@ -80,8 +90,8 @@ param databaseUrl string
 param apimPublisherEmail string
 
 @description('Publisher/organization name displayed on the APIM portal.')
-// [YOURS] — any string. Defaults to the namePrefix for convenience.
-param apimPublisherName string = namePrefix
+// [YOURS] — any string. Defaults to the workloadName for convenience.
+param apimPublisherName string = workloadName
 
 @description('When true, APIM enforces validate-jwt on every request. Leave false until the JWT params below are filled in, otherwise every request returns 401.')
 // [YOURS] — bool. Default false so the initial deploy succeeds with empty
@@ -129,7 +139,7 @@ resource rg 'Microsoft.Resources/resourceGroups@2021-04-01' = {
 module resources 'resources.bicep' = {
   // 'name' here is the name of the DEPLOYMENT (visible in the Azure portal
   // under "Deployments"), not the name of any resource. [YOURS].
-  name: 'resources-${namePrefix}'
+  name: 'resources-${workloadName}-${environment}'
   // 'scope' targets the module at the resource group we just created.
   // [PROPERTY] scope — Bicep keyword. The 'rg' reference is [YOURS] (matches
   // the symbolic name above).
@@ -139,7 +149,8 @@ module resources 'resources.bicep' = {
   // declared in resources.bicep. The values on the right are passed through.
   params: {
     location: location
-    namePrefix: namePrefix
+    workloadName: workloadName
+    environment: environment
     githubRepository: githubRepository
     githubEnvironment: githubEnvironment
     databaseUrl: databaseUrl

@@ -24,8 +24,11 @@
 @description('Azure region')
 param location string
 
-@description('Short, lowercase prefix used to derive resource names.')
-param namePrefix string
+@description('Workload name woven into every resource name (e.g. products).')
+param workloadName string
+
+@description('Deployment environment (dev/test/staging/prod) woven into every resource name.')
+param environment string
 
 @description('GitHub repo trusted by the federated credential, "owner/repo".')
 param githubRepository string
@@ -64,28 +67,41 @@ param jwtAudience string
 
 // [FIXED bicep function] uniqueString(...) — Bicep built-in.
 // [PROPERTY built-in]    resourceGroup().id — refers to the RG this template
-//                        deploys into. Both args together mean: "the same RG +
-//                        same prefix produces the same hash on every run."
-var resourceToken = uniqueString(resourceGroup().id, namePrefix)
+//                        deploys into. The three args together mean: "the same
+//                        RG + workload + environment produces the same hash on
+//                        every run" (and a DIFFERENT hash per environment).
+var resourceToken = uniqueString(resourceGroup().id, workloadName, environment)
 
-// Resource-name constants. All the strings below are [YOURS] — only the
-// length/character constraints are imposed by Azure:
+// -----------------------------------------------------------------------------
+// NAMING CONVENTION:  <resource-type>-<workload>-<environment>[-<hash>]
+//   e.g. with workloadName='products', environment='dev':
+//     rg-products-dev          (resource group, named in main.bicep)
+//     plan-products-dev        log-products-dev        appi-products-dev
+//     func-products-dev-<hash> apim-products-dev-<hash>  (globally unique → +hash)
+//     stproductsdev<hash>      (storage: no hyphens allowed, lowercased)
+//     id-products-dev-ghdeploy (the GitHub-deploy managed identity)
+// -----------------------------------------------------------------------------
+// All the strings below are [YOURS] — only the length/character constraints are
+// imposed by Azure:
 //   storage account: 3-24 chars, lowercase + digits only, GLOBALLY unique
 //   function app:    2-60 chars, alphanumeric + hyphens, GLOBALLY unique
 //   log analytics:   4-63 chars, alphanumeric + hyphens, RG-scoped
 //   plan:            1-40 chars, alphanumeric + hyphens, RG-scoped
+//   app insights:    1-255 chars, alphanumeric + hyphens, RG-scoped
 //   managed identity: 3-128 chars, alphanumeric + hyphens, RG-scoped
-// `take(str, n)` truncates to n chars — protects against length violations
-// when the namePrefix is near the max length.
-var storageName = toLower(take('st${namePrefix}${resourceToken}', 24))
-var planName = take('plan-${namePrefix}-${resourceToken}', 40)
-var functionAppName = take('func-${namePrefix}-${resourceToken}', 60)
-var lawName = take('log-${namePrefix}-${resourceToken}', 63)
-var aiName = take('appi-${namePrefix}-${resourceToken}', 260)
-var identityName = 'id-${namePrefix}-gh-deploy'
+// `take(str, n)` truncates to n chars — protects against length violations.
+// NOTE on storage: 'st' + workload + env + 13-char hash can exceed 24 chars, so
+// take(...,24) trims the TAIL of the hash. The readable 'stproductsdev' prefix
+// always survives, and ~11 surviving hash chars is still ample for uniqueness.
+var storageName = toLower(take('st${workloadName}${environment}${resourceToken}', 24))
+var planName = take('plan-${workloadName}-${environment}', 40)
+var functionAppName = take('func-${workloadName}-${environment}-${resourceToken}', 60)
+var lawName = take('log-${workloadName}-${environment}', 63)
+var aiName = take('appi-${workloadName}-${environment}', 255)
+var identityName = take('id-${workloadName}-${environment}-ghdeploy', 128)
 // APIM service name: 1-50 chars, alphanumeric + hyphens, GLOBALLY unique
 // (becomes part of the gateway URL: https://<apimName>.azure-api.net).
-var apimName = take('apim-${namePrefix}-${resourceToken}', 50)
+var apimName = take('apim-${workloadName}-${environment}-${resourceToken}', 50)
 // The container the Function App reads its zipped deployment package from.
 // [YOURS] — any valid container name. Azure Functions doesn't care what it's
 // called; the Function App points at it explicitly below.
@@ -230,7 +246,9 @@ resource plan 'Microsoft.Web/serverfarms@2023-12-01' = {
 // [PROPERTY] suffixes.storage — returns 'core.windows.net' in Azure public cloud,
 //            'core.usgovcloudapi.net' in Government, etc. Use the built-in so
 //            the template works in any cloud.
-var storageConnectionString = 'DefaultEndpointsProtocol=https;AccountName=${storage.name};AccountKey=${storage.listKeys().keys[0].value};EndpointSuffix=${environment().suffixes.storage}'
+// NOTE: the built-in is qualified as `az.environment()` because this template
+// has a parameter named `environment`, which would otherwise shadow it.
+var storageConnectionString = 'DefaultEndpointsProtocol=https;AccountName=${storage.name};AccountKey=${storage.listKeys().keys[0].value};EndpointSuffix=${az.environment().suffixes.storage}'
 
 resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
   name: functionAppName
@@ -605,7 +623,7 @@ var apiPolicyXmlEnabled = format('''<policies>
 var apiPolicyXmlDisabled = '''<policies>
   <inbound>
     <base />
-    <!-- JWT validation is DISABLED. Set jwtValidationEnabled=true in main.parameters.json
+    <!-- JWT validation is DISABLED. Set jwtValidationEnabled=true in main.parameters.<env>.json
          (and fill in openIdConfigUrl / jwtAudience / jwtIssuerUrl) to enforce. -->
   </inbound>
   <backend><base /></backend>

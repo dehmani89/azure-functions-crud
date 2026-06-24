@@ -26,9 +26,13 @@ on:
   # [PROPERTY] `push` — fires when commits are pushed to the listed branches.
   push:
     # [PROPERTY] `branches` — a list of branch patterns. [YOURS] which branches
-    #            you watch. We watch only `main` because that's what our
-    #            federated credential's `environment: production` is gated on.
-    branches: [main]
+    #            you watch. We watch both:
+    #              develop → deploys to the `dev` GitHub Environment
+    #              main    → deploys to the `prod` GitHub Environment
+    #            The branch→environment mapping is in the `environment:` line
+    #            on the job below. Each environment must have a federated
+    #            credential whose subject matches `…:environment:dev` / `…:prod`.
+    branches: [main, develop]
   # [PROPERTY] `workflow_dispatch` — adds a "Run workflow" button in the UI.
   #            No value needed; the key by itself enables manual triggers.
   workflow_dispatch:
@@ -66,13 +70,21 @@ jobs:
     runs-on: ubuntu-latest
     # [PROPERTY] `environment` — opts the job into the named GitHub
     #            Environment. CRITICAL: this is what changes the OIDC subject
-    #            claim from `repo:OWNER/REPO:ref:refs/heads/main` to
-    #            `repo:OWNER/REPO:environment:production`. The string here
-    #            MUST exactly match the `githubEnvironment` value baked into
-    #            the federated identity credential (Bicep param). Mismatch
-    #            ⇒ Azure rejects login with `AADSTS700213`.
-    # [YOURS]    name 'production' — pick anything, but mirror it in Bicep.
-    environment: production
+    #            claim from `repo:OWNER/REPO:ref:refs/heads/<branch>` to
+    #            `repo:OWNER/REPO:environment:<name>`. The string here MUST
+    #            exactly match the `githubEnvironment` value baked into the
+    #            federated identity credential (Bicep param). Mismatch ⇒ Azure
+    #            rejects login with `AADSTS700213`.
+    #
+    #            Branch → environment mapping: main → 'prod', everything else
+    #            (i.e. develop) → 'dev'. Because we use GitHub *environment-
+    #            scoped* variables, the same `vars.AZURE_*` references below
+    #            automatically resolve to that environment's values — no
+    #            per-branch variable juggling needed.
+    # [YOURS]    the two environment names 'prod' / 'dev' — pick anything, but
+    #            mirror them in the matching Bicep `githubEnvironment` param and
+    #            create GitHub Environments with the same names.
+    environment: ${{ github.ref == 'refs/heads/main' && 'prod' || 'dev' }}
 
     # [PROPERTY] `steps` — ordered list. Each runs in a fresh shell.
     steps:

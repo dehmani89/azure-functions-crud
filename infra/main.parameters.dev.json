@@ -5,17 +5,20 @@
     "location": {
       "value": "westus2"
     },
-    "namePrefix": {
-      "value": "prodcrud"
+    "workloadName": {
+      "value": "products"
+    },
+    "environment": {
+      "value": "dev"
     },
     "resourceGroupName": {
-      "value": "rg-prodcrud"
+      "value": "rg-products-dev"
     },
     "githubRepository": {
       "value": "dehmani89/azure-functions-crud"
     },
     "githubEnvironment": {
-      "value": "production"
+      "value": "dev"
     },
     "databaseUrl": {
       "value": "REPLACE_ME: postgresql://<user>:<password>@<host>:5432/<db>?sslmode=require"

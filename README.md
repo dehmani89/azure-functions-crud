@@ -230,11 +230,12 @@ psql "postgresql://<YOUR_USERNAME_HERE>:<YOUR_PASSWORD_HERE>@localhost:5432/prod
 ```
 azure-functions-crud/
 ├── .github/workflows/
-│   └── deploy.yml                 # CI/CD: push to main → deploy to Azure via OIDC
+│   └── deploy.yml                 # CI/CD: develop→dev, main→prod, deployed to Azure via OIDC
 ├── infra/                         # Bicep IaC (see infra/README.md)
 │   ├── main.bicep                 # Subscription-scope entry point
 │   ├── resources.bicep            # RG-scope: Function App, storage, identity, etc.
-│   ├── main.parameters.json       # Parameter values (databaseUrl is a placeholder)
+│   ├── main.parameters.dev.json   # Dev parameter values (databaseUrl is a placeholder)
+│   ├── main.parameters.prod.json  # Prod parameter values (databaseUrl is a placeholder)
 │   └── README.md                  # Cloud deployment guide
 ├── sql/
 │   └── setup.sql                  # Postgres schema + seed data
